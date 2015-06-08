@@ -69,6 +69,8 @@ type DockerInterface interface {
 	CreateExec(docker.CreateExecOptions) (*docker.Exec, error)
 	StartExec(string, docker.StartExecOptions) error
 	InspectExec(id string) (*docker.ExecInspect, error)
+	AddEventListener(listener chan<- *docker.APIEvents) error
+	RemoveEventListener(listener chan *docker.APIEvents) error
 }
 
 // KubeletContainerName encapsulates a pod name and a Kubernetes container name.

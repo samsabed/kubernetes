@@ -106,6 +106,9 @@ type DockerManager struct {
 
 	// Handler used to execute commands in containers.
 	execHandler ExecHandler
+
+	//Pod Cache
+	cache Cache
 }
 
 func NewDockerManager(
@@ -174,7 +177,7 @@ func NewDockerManager(
 	}
 	dm.runner = lifecycle.NewHandlerRunner(httpClient, dm, dm)
 	dm.prober = prober.New(dm, readinessManager, containerRefManager, recorder)
-
+	dm.cache = Cache{p: make(map[string]*PodCache)}
 	return dm
 }
 
@@ -757,6 +760,98 @@ func (dm *DockerManager) GetPods(all bool) ([]*kubecontainer.Pod, error) {
 		result = append(result, c)
 	}
 	return result, nil
+}
+
+type KContainerList []string
+
+type PodCache struct {
+	sync.Mutex
+	active  map[string]KContainerList
+	passive map[string]KContainerList
+	err     error
+}
+
+type Cache struct {
+	sync.Mutex
+	p   map[string]*PodCache
+	err error
+}
+
+func (dm *DockerManager) NewPodCacheLooper() {
+	listener := make(chan *docker.APIEvents, 10)
+	glog.V(4).Infof("GetPodsOnChange: dm.client.AddEventListener")
+
+	defer func() {
+		if listener != nil {
+			dm.client.RemoveEventListener(listener)
+		}
+	}()
+
+	if err := dm.client.AddEventListener(listener); err != nil {
+		dm.cache.Lock()
+		dm.cache.err = err
+		dm.cache.Unlock()
+		return
+	}
+
+	containers, err := dm.client.ListContainers(docker.ListContainersOptions{All: true})
+	if err != nil {
+		dm.cache.Lock()
+		dm.cache.err = err
+		dm.cache.Unlock()
+		return
+	}
+
+	for _, kc := range containers {
+		dockerName, _, err := ParseDockerName(kc.Names[0])
+		podCache := dm.cache.getOrCreate(dockerName.PodFullName)
+		if strings.HasPrefix(kc.Status, "Up") {
+			podCache.AddActive(dockerName.ContainerName, kc.ID)
+		} else {
+			podCache.AddPassive(dockerName.ContainerName, kc.ID)
+		}
+	}
+}
+
+func (c Cache) getOrCreate(name string) *PodCache {
+	c.Lock()
+	defer c.Unlock()
+	podCache, found := c.p[name]
+	if !found {
+		podCache = NewPodCache()
+		c.p[name] = podCache
+	}
+	return podCache
+}
+
+func (pc *PodCache) AddActive(containerName string, dockerID string) {
+	pc.Lock()
+	defer pc.Unlock()
+	list, ok := pc.active[containerName]
+	if !ok {
+		list = []string{}
+		pc.active[containerName] = list
+	}
+	list = append(list, dockerID)
+}
+
+func (pc *PodCache) AddPassive(containerName string, dockerID string) {
+	pc.Lock()
+	defer pc.Unlock()
+	list, ok := pc.passive[containerName]
+	if !ok {
+		list = []string{}
+		pc.passive[containerName] = list
+	}
+	list = append(list, dockerID)
+}
+
+func NewPodCache() *PodCache {
+	return &PodCache{active: make(map[string]KContainerList), passive: make(map[string]KContainerList)}
+}
+
+func NewKcontainerList() KContainerList {
+	return []string{}
 }
 
 // List all images in the local storage.

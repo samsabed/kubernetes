@@ -353,3 +353,17 @@ func (f *FakeDockerPuller) IsImagePresent(name string) (bool, error) {
 	}
 	return false, nil
 }
+
+func (f *FakeDockerClient) AddEventListener(listener chan<- *docker.APIEvents) error {
+	f.Lock()
+	defer f.Unlock()
+	f.called = append(f.called, "addEventListener")
+	return f.popError("addEventListener")
+}
+
+func (f *FakeDockerClient) RemoveEventListener(listener chan *docker.APIEvents) error {
+	f.Lock()
+	defer f.Unlock()
+	f.called = append(f.called, "removeEventListener")
+	return f.popError("removeEventListener")
+}

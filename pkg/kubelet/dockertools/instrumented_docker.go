@@ -189,3 +189,19 @@ func (in instrumentedDockerInterface) InspectExec(id string) (*docker.ExecInspec
 	recordError(operation, err)
 	return out, err
 }
+
+func (in instrumentedDockerInterface) AddEventListener(listener chan<- *docker.APIEvents) error {
+	start := time.Now()
+	defer func() {
+		metrics.DockerOperationsLatency.WithLabelValues("addEventListener").Observe(metrics.SinceInMicroseconds(start))
+	}()
+	return in.client.AddEventListener(listener)
+}
+
+func (in instrumentedDockerInterface) RemoveEventListener(listener chan *docker.APIEvents) error {
+	start := time.Now()
+	defer func() {
+		metrics.DockerOperationsLatency.WithLabelValues("removeEventListener").Observe(metrics.SinceInMicroseconds(start))
+	}()
+	return in.client.RemoveEventListener(listener)
+}
