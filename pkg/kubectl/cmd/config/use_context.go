@@ -62,6 +62,12 @@ func (o useContextOptions) run() error {
 		return err
 	}
 
+	// Contexts map[string]Context
+	_, ok := config.Contexts[o.contextName]
+	if !ok {
+		return errors.New(fmt.Sprintf("%s is not a defined context", o.contextName))
+	}
+
 	config.CurrentContext = o.contextName
 
 	if err := ModifyConfig(o.configAccess, *config); err != nil {
