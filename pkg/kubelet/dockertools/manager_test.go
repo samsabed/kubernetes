@@ -31,6 +31,7 @@ import (
 
 	docker "github.com/fsouza/go-dockerclient"
 	cadvisorApi "github.com/google/cadvisor/info/v1"
+	"github.com/stretchr/testify/assert"
 	"k8s.io/kubernetes/pkg/api"
 	"k8s.io/kubernetes/pkg/api/testapi"
 	"k8s.io/kubernetes/pkg/client/record"
@@ -89,7 +90,8 @@ func newTestDockerManagerWithHTTPClient(fakeHTTPClient *fakeHTTP) (*DockerManage
 		kubecontainer.FakeOS{},
 		networkPlugin,
 		optionGenerator,
-		fakeHTTPClient)
+		fakeHTTPClient,
+		util.NewBackOff(time.Second, 300*time.Second))
 
 	return dockerManager, fakeDocker
 }
@@ -1011,49 +1013,36 @@ func TestSyncPodWithPullPolicy(t *testing.T) {
 		},
 	}
 
+	expectedStatusMap := make(map[string]*api.ContainerState)
+	expectedStatusMap["bar"] = &api.ContainerState{Waiting: nil, Running: &api.ContainerStateRunning{util.Time{}}}
+	expectedStatusMap["bar2"] = &api.ContainerState{Waiting: nil, Running: &api.ContainerStateRunning{util.Time{}}}
+	expectedStatusMap["bar3"] = &api.ContainerState{Waiting: nil, Running: &api.ContainerStateRunning{util.Time{}}}
+	expectedStatusMap["bar4"] = &api.ContainerState{Waiting: nil, Running: &api.ContainerStateRunning{util.Time{}}}
+	expectedStatusMap["bar1"] = &api.ContainerState{Waiting: &api.ContainerStateWaiting{Reason: kubecontainer.ErrImageNeverPull.Error()}, Running: nil}
+
 	runSyncPod(t, dm, fakeDocker, pod, nil)
-
-	fakeDocker.Lock()
-
-	eventSet := []string{
-		`Pulling Pulling image "pod_infra_image"`,
-		`Pulled Successfully pulled image "pod_infra_image"`,
-		`Pulling Pulling image "pull_always_image"`,
-		`Pulled Successfully pulled image "pull_always_image"`,
-		`Pulling Pulling image "pull_if_not_present_image"`,
-		`Pulled Successfully pulled image "pull_if_not_present_image"`,
-		`Pulled Container image "existing_one" already present on machine`,
-		`Pulled Container image "want:latest" already present on machine`,
+	statuses, err := dm.GetPodStatus(pod)
+	if err != nil {
+		t.Errorf("unable to get pod status")
 	}
-
-	recorder := dm.recorder.(*record.FakeRecorder)
-
-	var actualEvents []string
-	for _, ev := range recorder.Events {
-		if strings.HasPrefix(ev, "Pull") {
-			actualEvents = append(actualEvents, ev)
+	for _, c := range pod.Spec.Containers {
+		if containerStatus, ok := api.GetContainerStatus(statuses.ContainerStatuses, c.Name); ok {
+			assert.Equal(t, containerStatus.State.Running, expectedStatusMap[c.Name].Running, "for container %s", c.Name)
+			assert.Equal(t, containerStatus.State.Waiting, expectedStatusMap[c.Name].Waiting, "for container %s", c.Name)
 		}
 	}
-	sort.StringSlice(actualEvents).Sort()
-	sort.StringSlice(eventSet).Sort()
-	if !reflect.DeepEqual(actualEvents, eventSet) {
-		t.Errorf("Expected: %#v, Actual: %#v", eventSet, actualEvents)
-	}
 
+	fakeDocker.Lock()
 	pulledImageSet := make(map[string]empty)
 	for v := range puller.ImagesPulled {
 		pulledImageSet[puller.ImagesPulled[v]] = empty{}
 	}
 
-	if !reflect.DeepEqual(pulledImageSet, map[string]empty{
-		"pod_infra_image":           {},
-		"pull_always_image":         {},
-		"pull_if_not_present_image": {},
-	}) {
-		t.Errorf("Unexpected pulled containers: %v", puller.ImagesPulled)
-	}
+	pulledImageSorted := puller.ImagesPulled[:]
+	sort.Strings(pulledImageSorted)
+	assert.Equal(t, pulledImageSorted, []string{"pod_infra_image", "pull_always_image", "pull_if_not_present_image"})
 
-	if len(fakeDocker.Created) != 6 {
+	if len(fakeDocker.Created) != 5 {
 		t.Errorf("Unexpected containers created %v", fakeDocker.Created)
 	}
 	fakeDocker.Unlock()
@@ -1501,7 +1490,7 @@ func TestGetPodPullImageFailureReason(t *testing.T) {
 	puller := dm.dockerPuller.(*FakeDockerPuller)
 	puller.HasImages = []string{}
 	// Inject the pull image failure error.
-	failureReason := "PullImageError"
+	failureReason := kubecontainer.ErrImagePull.Error()
 	puller.ErrorsToInject = []error{fmt.Errorf("%s", failureReason)}
 
 	pod := &api.Pod{

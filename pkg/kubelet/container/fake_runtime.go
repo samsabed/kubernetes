@@ -42,6 +42,7 @@ type FakeRuntime struct {
 	KilledContainers  []string
 	VersionInfo       string
 	Err               error
+	InspectErr        error
 }
 
 // FakeRuntime should implement Runtime.
@@ -96,6 +97,7 @@ func (f *FakeRuntime) ClearCalls() {
 	f.KilledContainers = []string{}
 	f.VersionInfo = ""
 	f.Err = nil
+	f.InspectErr = nil
 }
 
 func (f *FakeRuntime) assertList(expect []string, test []string) error {
@@ -274,10 +276,10 @@ func (f *FakeRuntime) IsImagePresent(image ImageSpec) (bool, error) {
 	f.CalledFunctions = append(f.CalledFunctions, "IsImagePresent")
 	for _, i := range f.ImageList {
 		if i.ID == image.Image {
-			return true, f.Err
+			return true, nil
 		}
 	}
-	return false, f.Err
+	return false, f.InspectErr
 }
 
 func (f *FakeRuntime) ListImages() ([]Image, error) {

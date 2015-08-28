@@ -157,7 +157,9 @@ func NewDockerManager(
 	execHandler ExecHandler,
 	oomAdjuster *oom.OomAdjuster,
 	procFs procfs.ProcFsInterface,
-	cpuCFSQuota bool) *DockerManager {
+	cpuCFSQuota bool,
+	imageBackOff *util.Backoff) *DockerManager {
+
 	// Work out the location of the Docker runtime, defaulting to /var/lib/docker
 	// if there are any problems.
 	dockerRoot := "/var/lib/docker"
@@ -212,7 +214,7 @@ func NewDockerManager(
 	}
 	dm.runner = lifecycle.NewHandlerRunner(httpClient, dm, dm)
 	dm.prober = prober.New(dm, readinessManager, containerRefManager, recorder)
-	dm.imagePuller = kubecontainer.NewImagePuller(recorder, dm)
+	dm.imagePuller = kubecontainer.NewImagePuller(recorder, dm, imageBackOff)
 
 	return dm
 }
@@ -525,20 +527,13 @@ func (dm *DockerManager) GetPodStatus(pod *api.Pod) (*api.PodStatus, error) {
 			containerStatus.RestartCount = oldStatus.RestartCount
 			containerStatus.LastTerminationState = oldStatus.LastTerminationState
 		}
-		//Check image is ready on the node or not.
-		image := container.Image
 		// TODO(dchen1107): docker/docker/issues/8365 to figure out if the image exists
-		_, err := dm.client.InspectImage(image)
-		if err == nil {
-			containerStatus.State.Waiting = &api.ContainerStateWaiting{
-				Message: fmt.Sprintf("Image: %s is ready, container is creating", image),
-				Reason:  "ContainerCreating",
-			}
-		} else if err == docker.ErrNoSuchImage {
-			containerStatus.State.Waiting = &api.ContainerStateWaiting{
-				Message: fmt.Sprintf("Image: %s is not ready on the node", image),
-				Reason:  "ImageNotReady",
-			}
+		reason, ok := dm.reasonCache.Get(uid, container.Name)
+		if !ok {
+			reason = "ContainerCreating" // default position ?
+		}
+		containerStatus.State.Waiting = &api.ContainerStateWaiting{
+			Reason: fmt.Sprintf(reason),
 		}
 		statuses[container.Name] = &containerStatus
 	}
