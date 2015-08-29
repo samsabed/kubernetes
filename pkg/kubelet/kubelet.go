@@ -80,9 +80,6 @@ const (
 	// Location of container logs.
 	containerLogsDir = "/var/log/containers"
 
-	// max backoff period
-	maxContainerBackOff = 300 * time.Second
-
 	// Capacity of the channel for storing pods to kill. A small number should
 	// suffice because a goroutine is dedicated to check the channel and does
 	// not block on anything else.
@@ -381,7 +378,9 @@ func NewMainKubelet(
 		}
 	}
 
-	klet.backOff = util.NewBackOff(resyncInterval, maxContainerBackOff)
+	kubecontainer.BackOffInterval = resyncInterval
+	kubecontainer.BackOffMax = 10 * time.Minute
+	klet.backOff = util.NewBackOff(kubecontainer.BackOffInterval, kubecontainer.BackOffMax)
 	klet.podKillingCh = make(chan *kubecontainer.Pod, podKillingChannelCapacity)
 
 	return klet, nil

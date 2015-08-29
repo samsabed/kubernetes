@@ -18,10 +18,12 @@ package container
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/golang/glog"
 	"k8s.io/kubernetes/pkg/api"
 	"k8s.io/kubernetes/pkg/client/unversioned/record"
+	"k8s.io/kubernetes/pkg/util"
 )
 
 // imagePuller pulls the image using Runtime.PullImage().
@@ -30,6 +32,7 @@ import (
 type imagePuller struct {
 	recorder record.EventRecorder
 	runtime  Runtime
+	backOff  *util.Backoff
 }
 
 // NewImagePuller takes an event recorder and container runtime to create a
@@ -38,6 +41,7 @@ func NewImagePuller(recorder record.EventRecorder, runtime Runtime) ImagePuller 
 	return &imagePuller{
 		recorder: recorder,
 		runtime:  runtime,
+		backOff:  util.NewBackOff(BackOffInterval, BackOffMax),
 	}
 }
 
@@ -88,12 +92,30 @@ func (puller *imagePuller) PullImage(pod *api.Pod, container *api.Container, pul
 	}
 
 	if !shouldPullImage(container, present) {
-		if present && ref != nil {
-			puller.recorder.Eventf(ref, "pulled", "Container image %q already present on machine", container.Image)
+		var reason, msg string
+		var r error
+		if present {
+			reason = "pulled"
+			msg = fmt.Sprintf("Container image %q already present on machine", container.Image)
+			r = nil
+		} else {
+			reason = "NeverPull"
+			msg = fmt.Sprintf("Container image %q is not present on machine with pull policy set to NeverPull", container.Image)
+			r = fmt.Errorf(msg)
 		}
-		return nil
+
+		if ref != nil {
+			puller.recorder.Eventf(ref, reason, msg)
+		}
+		return r
 	}
 
+	if puller.backOff.IsInBackOffSinceUpdate(container.Image, time.Now()) {
+		puller.reportImagePull(ref, "backoff", container.Image, nil)
+		msg := fmt.Sprintf("back-off pulling image %q", container.Image)
+		puller.recorder.Eventf(ref, "back-off", msg)
+		return fmt.Errorf(msg)
+	}
 	puller.reportImagePull(ref, "pulling", container.Image, nil)
 	if err = puller.runtime.PullImage(spec, pullSecrets); err != nil {
 		puller.reportImagePull(ref, "failed", container.Image, err)
