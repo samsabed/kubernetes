@@ -40,7 +40,7 @@ var (
 	buildBackOffDuration = time.Minute
 	syncLoopFrequency    = time.Second
 	maxContainerBackOff  = 300 * time.Second
-	maxBackOffTolerance  = time.Duration(1.5 * float64(maxContainerBackOff))
+	maxBackOffTolerance  = time.Duration(1.3 * float64(maxContainerBackOff))
 )
 
 func runPod(framework *Framework, pod *api.Pod) {
