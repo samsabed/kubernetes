@@ -80,6 +80,9 @@ const (
 	// Location of container logs.
 	containerLogsDir = "/var/log/containers"
 
+	// max backoff period
+	maxContainerBackOff = 300 * time.Second
+
 	// Capacity of the channel for storing pods to kill. A small number should
 	// suffice because a goroutine is dedicated to check the channel and does
 	// not block on anything else.
@@ -287,7 +290,7 @@ func NewMainKubelet(
 
 	oomAdjuster := oom.NewOomAdjuster()
 	procFs := procfs.NewProcFs()
-
+	imageBackOff := util.NewBackOff(resyncInterval, maxContainerBackOff)
 	// Initialize the runtime.
 	switch containerRuntime {
 	case "docker":
@@ -308,7 +311,8 @@ func NewMainKubelet(
 			klet.httpClient,
 			dockerExecHandler,
 			oomAdjuster,
-			procFs)
+			procFs,
+			imageBackOff)
 	case "rkt":
 		conf := &rkt.Config{
 			Path:               rktPath,
@@ -320,7 +324,8 @@ func NewMainKubelet(
 			recorder,
 			containerRefManager,
 			readinessManager,
-			klet.volumeManager)
+			klet.volumeManager,
+			imageBackOff)
 		if err != nil {
 			return nil, err
 		}
@@ -378,9 +383,7 @@ func NewMainKubelet(
 		}
 	}
 
-	kubecontainer.BackOffInterval = resyncInterval
-	kubecontainer.BackOffMax = 10 * time.Minute
-	klet.backOff = util.NewBackOff(kubecontainer.BackOffInterval, kubecontainer.BackOffMax)
+	klet.backOff = util.NewBackOff(resyncInterval, maxContainerBackOff)
 	klet.podKillingCh = make(chan *kubecontainer.Pod, podKillingChannelCapacity)
 
 	return klet, nil

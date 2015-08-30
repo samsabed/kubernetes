@@ -18,7 +18,6 @@ package container
 
 import (
 	"fmt"
-	"time"
 
 	"github.com/golang/glog"
 	"k8s.io/kubernetes/pkg/api"
@@ -37,11 +36,11 @@ type imagePuller struct {
 
 // NewImagePuller takes an event recorder and container runtime to create a
 // image puller that wraps the container runtime's PullImage interface.
-func NewImagePuller(recorder record.EventRecorder, runtime Runtime) ImagePuller {
+func NewImagePuller(recorder record.EventRecorder, runtime Runtime, imageBackOff *util.Backoff) ImagePuller {
 	return &imagePuller{
 		recorder: recorder,
 		runtime:  runtime,
-		backOff:  util.NewBackOff(BackOffInterval, BackOffMax),
+		backOff:  imageBackOff,
 	}
 }
 
@@ -101,26 +100,32 @@ func (puller *imagePuller) PullImage(pod *api.Pod, container *api.Container, pul
 		} else {
 			reason = "NeverPull"
 			msg = fmt.Sprintf("Container image %q is not present on machine with pull policy set to NeverPull", container.Image)
-			r = fmt.Errorf(msg)
+			r = fmt.Errorf(reason)
 		}
 
 		if ref != nil {
 			puller.recorder.Eventf(ref, reason, msg)
 		}
+		glog.Infof(msg)
 		return r
 	}
 
-	if puller.backOff.IsInBackOffSinceUpdate(container.Image, time.Now()) {
+	if puller.backOff.IsInBackOffSinceUpdate(container.Image, puller.backOff.Clock.Now()) {
 		puller.reportImagePull(ref, "backoff", container.Image, nil)
+		glog.Infof("back-off pulling image %q (%s)", container.Image, puller.backOff.Get(container.Image))
 		msg := fmt.Sprintf("back-off pulling image %q", container.Image)
 		puller.recorder.Eventf(ref, "back-off", msg)
-		return fmt.Errorf(msg)
+		return ErrImagePullBackOff
 	}
 	puller.reportImagePull(ref, "pulling", container.Image, nil)
 	if err = puller.runtime.PullImage(spec, pullSecrets); err != nil {
 		puller.reportImagePull(ref, "failed", container.Image, err)
+		if err != nil {
+			puller.backOff.Next(container.Image, puller.backOff.Clock.Now())
+		}
 		return err
 	}
 	puller.reportImagePull(ref, "pulled", container.Image, nil)
+	puller.backOff.GC()
 	return nil
 }

@@ -164,6 +164,7 @@ func TestRunOnce(t *testing.T) {
 		kubecontainer.FakeOS{},
 		kb.networkPlugin,
 		kb,
+		nil,
 		nil)
 
 	pods := []*api.Pod{

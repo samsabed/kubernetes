@@ -113,7 +113,7 @@ func New(config *Config,
 	recorder record.EventRecorder,
 	containerRefManager *kubecontainer.RefManager,
 	readinessManager *kubecontainer.ReadinessManager,
-	volumeGetter volumeGetter) (kubecontainer.Runtime, error) {
+	volumeGetter volumeGetter, imageBackOff *util.Backoff) (kubecontainer.Runtime, error) {
 
 	systemdVersion, err := getSystemdVersion()
 	if err != nil {
@@ -154,7 +154,7 @@ func New(config *Config,
 		volumeGetter:        volumeGetter,
 	}
 	rkt.prober = prober.New(rkt, readinessManager, containerRefManager, recorder)
-	rkt.imagePuller = kubecontainer.NewImagePuller(recorder, rkt)
+	rkt.imagePuller = kubecontainer.NewImagePuller(recorder, rkt, imageBackOff)
 
 	// Test the rkt version.
 	version, err := rkt.Version()

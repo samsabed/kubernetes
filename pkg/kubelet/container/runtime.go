@@ -22,7 +22,6 @@ import (
 	"io"
 	"reflect"
 	"strings"
-	"time"
 
 	"k8s.io/kubernetes/pkg/api"
 	"k8s.io/kubernetes/pkg/types"
@@ -33,9 +32,8 @@ import (
 // Container Terminated and Kubelet is backing off the restart
 var ErrCrashLoopBackOff = errors.New("CrashLoopBackOff")
 
-// injected by Kubelet
-var BackOffInterval time.Duration
-var BackOffMax time.Duration
+// Container image pull failed, kubelet is backing off image pull
+var ErrImagePullBackOff = errors.New("ImagePullBackOff")
 
 type Version interface {
 	// Compare compares two versions of the runtime. On success it returns -1
