@@ -492,30 +492,19 @@ func (dm *DockerManager) GetPodStatus(pod *api.Pod) (*api.PodStatus, error) {
 			containerStatus.RestartCount = oldStatus.RestartCount
 			containerStatus.LastTerminationState = oldStatus.LastTerminationState
 		}
-		//Check image is ready on the node or not.
-		image := container.Image
 		// TODO(dchen1107): docker/docker/issues/8365 to figure out if the image exists
-		_, err := dm.client.InspectImage(image)
-		if err == nil {
-			containerStatus.State.Waiting = &api.ContainerStateWaiting{
-				Reason: fmt.Sprintf("Image: %s is ready, container is creating", image),
-			}
-		} else if err == docker.ErrNoSuchImage {
-			containerStatus.State.Waiting = &api.ContainerStateWaiting{
-				Reason: fmt.Sprintf("Image: %s is not ready on the node", image),
-			}
+		reason, ok := dm.reasonCache.Get(uid, container.Name)
+		if !ok {
+			reason = fmt.Sprintf("container is creating") // default position
+		}
+		containerStatus.State.Waiting = &api.ContainerStateWaiting{
+			Reason: fmt.Sprintf(reason),
 		}
 		statuses[container.Name] = &containerStatus
 	}
 
 	podStatus.ContainerStatuses = make([]api.ContainerStatus, 0)
-	for containerName, status := range statuses {
-		if status.State.Waiting != nil {
-			// For containers in the waiting state, fill in a specific reason if it is recorded.
-			if reason, ok := dm.reasonCache.Get(uid, containerName); ok {
-				status.State.Waiting.Reason = reason
-			}
-		}
+	for _, status := range statuses {
 		podStatus.ContainerStatuses = append(podStatus.ContainerStatuses, *status)
 	}
 	// Sort the container statuses since clients of this interface expect the list
