@@ -64,7 +64,7 @@ type Runtime interface {
 	// GetPodStatus retrieves the status of the pod, including the information of
 	// all containers in the pod. Clients of this interface assume the containers
 	// statuses in a pod always have a deterministic ordering (eg: sorted by name).
-	GetPodStatus(*api.Pod) (*api.PodStatus, error)
+	GetPodStatus(*api.Pod) (*api.PodStatus, []string, error)
 	// PullImage pulls an image from the network to local storage using the supplied
 	// secrets if necessary.
 	PullImage(image ImageSpec, pullSecrets []api.Secret) error

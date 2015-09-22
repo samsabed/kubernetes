@@ -381,7 +381,7 @@ func (dm *DockerManager) inspectContainer(dockerID, containerName, tPath string,
 
 // GetPodStatus returns docker related status for all containers in the pod as
 // well as the infrastructure container.
-func (dm *DockerManager) GetPodStatus(pod *api.Pod) (*api.PodStatus, error) {
+func (dm *DockerManager) GetPodStatus(pod *api.Pod) (*api.PodStatus, []string, error) {
 	podFullName := kubecontainer.GetPodFullName(pod)
 	uid := pod.UID
 	manifest := pod.Spec
@@ -410,7 +410,7 @@ func (dm *DockerManager) GetPodStatus(pod *api.Pod) (*api.PodStatus, error) {
 
 	containers, err := dm.client.ListContainers(docker.ListContainersOptions{All: true})
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	containerDone := sets.NewString()
@@ -445,7 +445,7 @@ func (dm *DockerManager) GetPodStatus(pod *api.Pod) (*api.PodStatus, error) {
 		// Inspect the container.
 		result := dm.inspectContainer(value.ID, dockerContainerName, terminationMessagePath, pod)
 		if result.err != nil {
-			return nil, result.err
+			return nil, nil, result.err
 		} else if result.status.State.Terminated != nil {
 			terminationState = &result.status.State
 		}
@@ -549,7 +549,7 @@ func (dm *DockerManager) GetPodStatus(pod *api.Pod) (*api.PodStatus, error) {
 	// of containers in a pod to behave like the output of `docker list`, which has a
 	// deterministic order.
 	sort.Sort(kubeletTypes.SortedContainerStatuses(podStatus.ContainerStatuses))
-	return &podStatus, nil
+	return &podStatus, nil, nil
 }
 
 // makeEnvList converts EnvVar list to a list of strings, in the form of

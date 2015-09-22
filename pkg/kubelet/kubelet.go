@@ -1179,7 +1179,7 @@ func (kl *Kubelet) syncPod(pod *api.Pod, mirrorPod *api.Pod, runningPod kubecont
 		} else if kl.shaper != nil {
 			status, found := kl.statusManager.GetPodStatus(pod.UID)
 			if !found {
-				statusPtr, err := kl.containerRuntime.GetPodStatus(pod)
+				statusPtr, _, err := kl.containerRuntime.GetPodStatus(pod)
 				if err != nil {
 					glog.Errorf("Error getting pod for bandwidth shaping")
 					return err
@@ -1298,7 +1298,7 @@ func (kl *Kubelet) cleanupBandwidthLimits(allPods []*api.Pod) error {
 		}
 		status, found := kl.statusManager.GetPodStatus(pod.UID)
 		if !found {
-			statusPtr, err := kl.containerRuntime.GetPodStatus(pod)
+			statusPtr, _, err := kl.containerRuntime.GetPodStatus(pod)
 			if err != nil {
 				return err
 			}
@@ -2222,7 +2222,7 @@ func (kl *Kubelet) generatePodStatus(pod *api.Pod) (api.PodStatus, error) {
 	}
 
 	spec := &pod.Spec
-	podStatus, err := kl.containerRuntime.GetPodStatus(pod)
+	podStatus, _, err := kl.containerRuntime.GetPodStatus(pod)
 
 	if err != nil {
 		// Error handling

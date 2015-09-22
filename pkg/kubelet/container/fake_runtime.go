@@ -210,13 +210,13 @@ func (f *FakeRuntime) KillContainerInPod(container api.Container, pod *api.Pod) 
 	return f.Err
 }
 
-func (f *FakeRuntime) GetPodStatus(*api.Pod) (*api.PodStatus, error) {
+func (f *FakeRuntime) GetPodStatus(*api.Pod) (*api.PodStatus, []string, error) {
 	f.Lock()
 	defer f.Unlock()
 
 	f.CalledFunctions = append(f.CalledFunctions, "GetPodStatus")
 	status := f.PodStatus
-	return &status, f.Err
+	return &status, nil, f.Err
 }
 
 func (f *FakeRuntime) GetContainers(all bool) ([]*Container, error) {

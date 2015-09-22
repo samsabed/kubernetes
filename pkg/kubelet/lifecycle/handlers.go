@@ -35,7 +35,7 @@ type HandlerRunner struct {
 }
 
 type podStatusProvider interface {
-	GetPodStatus(pod *api.Pod) (*api.PodStatus, error)
+	GetPodStatus(pod *api.Pod) (*api.PodStatus, []string, error)
 }
 
 func NewHandlerRunner(httpGetter kubeletTypes.HttpGetter, commandRunner kubecontainer.ContainerCommandRunner, containerManager podStatusProvider) kubecontainer.HandlerRunner {
@@ -89,7 +89,7 @@ func resolvePort(portReference util.IntOrString, container *api.Container) (int,
 func (hr *HandlerRunner) runHTTPHandler(pod *api.Pod, container *api.Container, handler *api.Handler) error {
 	host := handler.HTTPGet.Host
 	if len(host) == 0 {
-		status, err := hr.containerManager.GetPodStatus(pod)
+		status, _, err := hr.containerManager.GetPodStatus(pod)
 		if err != nil {
 			glog.Errorf("Unable to get pod info, event handlers may be invalid.")
 			return err

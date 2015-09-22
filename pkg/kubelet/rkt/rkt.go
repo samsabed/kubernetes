@@ -818,22 +818,22 @@ func (r *runtime) KillPod(pod *api.Pod, runningPod kubecontainer.Pod) error {
 
 // getPodStatus reads the service file and invokes 'rkt status $UUID' to get the
 // pod's status.
-func (r *runtime) getPodStatus(serviceName string) (*api.PodStatus, error) {
+func (r *runtime) getPodStatus(serviceName string) (*api.PodStatus, []string, error) {
 	// TODO(yifan): Get rkt uuid from the service file name.
 	pod, rktInfo, err := r.readServiceFile(serviceName)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	podInfo, err := r.getPodInfo(rktInfo.uuid)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	status := makePodStatus(pod, podInfo, rktInfo)
-	return &status, nil
+	return &status, nil, nil
 }
 
 // GetPodStatus returns the status of the given pod.
-func (r *runtime) GetPodStatus(pod *api.Pod) (*api.PodStatus, error) {
+func (r *runtime) GetPodStatus(pod *api.Pod) (*api.PodStatus, []string, error) {
 	serviceName := makePodServiceFileName(pod.UID)
 	return r.getPodStatus(serviceName)
 }
