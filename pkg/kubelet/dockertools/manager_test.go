@@ -1005,20 +1005,21 @@ func TestSyncPodWithPullPolicy(t *testing.T) {
 		Spec: api.PodSpec{
 			Containers: []api.Container{
 				{Name: "bar", Image: "pull_always_image", ImagePullPolicy: api.PullAlways},
-				{Name: "bar1", Image: "pull_never_image", ImagePullPolicy: api.PullNever},
 				{Name: "bar2", Image: "pull_if_not_present_image", ImagePullPolicy: api.PullIfNotPresent},
 				{Name: "bar3", Image: "existing_one", ImagePullPolicy: api.PullIfNotPresent},
 				{Name: "bar4", Image: "want:latest", ImagePullPolicy: api.PullIfNotPresent},
+				{Name: "bar5", Image: "pull_never_image", ImagePullPolicy: api.PullNever},
 			},
 		},
 	}
 
-	expectedStatusMap := make(map[string]*api.ContainerState)
-	expectedStatusMap["bar"] = &api.ContainerState{Waiting: nil, Running: &api.ContainerStateRunning{util.Time{}}}
-	expectedStatusMap["bar2"] = &api.ContainerState{Waiting: nil, Running: &api.ContainerStateRunning{util.Time{}}}
-	expectedStatusMap["bar3"] = &api.ContainerState{Waiting: nil, Running: &api.ContainerStateRunning{util.Time{}}}
-	expectedStatusMap["bar4"] = &api.ContainerState{Waiting: nil, Running: &api.ContainerStateRunning{util.Time{}}}
-	expectedStatusMap["bar1"] = &api.ContainerState{Waiting: &api.ContainerStateWaiting{Reason: kubecontainer.ErrImageNeverPull.Error()}, Running: nil}
+	expectedStatusMap := map[string]*api.ContainerState{
+		"bar":  {Waiting: nil, Running: &api.ContainerStateRunning{util.Time{}}},
+		"bar2": {Waiting: nil, Running: &api.ContainerStateRunning{util.Time{}}},
+		"bar3": {Waiting: nil, Running: &api.ContainerStateRunning{util.Time{}}},
+		"bar4": {Waiting: nil, Running: &api.ContainerStateRunning{util.Time{}}},
+		"bar5": {Waiting: &api.ContainerStateWaiting{Reason: kubecontainer.ErrImageNeverPull.Error()}, Running: nil},
+	}
 
 	runSyncPod(t, dm, fakeDocker, pod, nil)
 	statuses, err := dm.GetPodStatus(pod)
@@ -1033,6 +1034,7 @@ func TestSyncPodWithPullPolicy(t *testing.T) {
 	}
 
 	fakeDocker.Lock()
+	defer fakeDocker.Unlock()
 	pulledImageSet := make(map[string]empty)
 	for v := range puller.ImagesPulled {
 		pulledImageSet[puller.ImagesPulled[v]] = empty{}
@@ -1045,7 +1047,6 @@ func TestSyncPodWithPullPolicy(t *testing.T) {
 	if len(fakeDocker.Created) != 5 {
 		t.Errorf("Unexpected containers created %v", fakeDocker.Created)
 	}
-	fakeDocker.Unlock()
 }
 
 func TestSyncPodWithRestartPolicy(t *testing.T) {

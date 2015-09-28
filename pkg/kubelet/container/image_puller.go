@@ -61,11 +61,11 @@ func shouldPullImage(container *api.Container, imagePresent bool) bool {
 
 // records an event using ref, event msg.  log to glog using prefix, msg, logFn
 func (puller *imagePuller) logIt(ref *api.ObjectReference, event, prefix, msg string, logFn func(args ...interface{})) {
-	logFn(fmt.Sprint(prefix, " ", msg))
 	if ref != nil {
 		puller.recorder.Eventf(ref, event, msg)
+	} else {
+		logFn(fmt.Sprint(prefix, " ", msg))
 	}
-	return
 }
 
 // PullImage pulls the image for the specified pod and container.
@@ -90,7 +90,7 @@ func (puller *imagePuller) PullImage(pod *api.Pod, container *api.Container, pul
 		} else {
 			msg := fmt.Sprintf("Container image %q is not present with pull policy of Never", container.Image)
 			puller.logIt(ref, "ErrImageNeverPull", logPrefix, msg, glog.Warning)
-			return (ErrImageNeverPull)
+			return ErrImageNeverPull
 		}
 	}
 
