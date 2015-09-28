@@ -111,7 +111,7 @@ func TestPuller(t *testing.T) {
 
 		for tick, expected := range c.expectedErr {
 			fakeClock.Step(time.Second)
-			err := puller.PullImage(pod, container, nil)
+			err, _ := puller.PullImage(pod, container, nil)
 			fakeRuntime.AssertCalls(c.calledFunctions)
 			assert.Equal(t, expected, err, "in test %d tick=%d", i, tick)
 		}

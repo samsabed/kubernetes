@@ -420,7 +420,7 @@ func (r *runtime) makePodManifest(pod *api.Pod, pullSecrets []api.Secret) (*appc
 	manifest := appcschema.BlankPodManifest()
 
 	for _, c := range pod.Spec.Containers {
-		if err := r.imagePuller.PullImage(pod, &c, pullSecrets); err != nil {
+		if err, _ := r.imagePuller.PullImage(pod, &c, pullSecrets); err != nil {
 			return nil, err
 		}
 		imgManifest, err := r.getImageManifest(c.Image)

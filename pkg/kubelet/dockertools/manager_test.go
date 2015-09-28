@@ -34,6 +34,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"k8s.io/kubernetes/pkg/api"
 	"k8s.io/kubernetes/pkg/api/testapi"
+	"k8s.io/kubernetes/pkg/api/unversioned"
 	"k8s.io/kubernetes/pkg/client/record"
 	kubecontainer "k8s.io/kubernetes/pkg/kubelet/container"
 	"k8s.io/kubernetes/pkg/kubelet/network"
@@ -1014,11 +1015,12 @@ func TestSyncPodWithPullPolicy(t *testing.T) {
 	}
 
 	expectedStatusMap := map[string]*api.ContainerState{
-		"bar":  {Waiting: nil, Running: &api.ContainerStateRunning{util.Time{}}},
-		"bar2": {Waiting: nil, Running: &api.ContainerStateRunning{util.Time{}}},
-		"bar3": {Waiting: nil, Running: &api.ContainerStateRunning{util.Time{}}},
-		"bar4": {Waiting: nil, Running: &api.ContainerStateRunning{util.Time{}}},
-		"bar5": {Waiting: &api.ContainerStateWaiting{Reason: kubecontainer.ErrImageNeverPull.Error()}, Running: nil},
+		"bar":  {Waiting: nil, Running: &api.ContainerStateRunning{unversioned.Time{}}},
+		"bar2": {Waiting: nil, Running: &api.ContainerStateRunning{unversioned.Time{}}},
+		"bar3": {Waiting: nil, Running: &api.ContainerStateRunning{unversioned.Time{}}},
+		"bar4": {Waiting: nil, Running: &api.ContainerStateRunning{unversioned.Time{}}},
+		"bar5": {Waiting: &api.ContainerStateWaiting{Reason: kubecontainer.ErrImageNeverPull.Error(),
+			Message: "Container image \"pull_never_image\" is not present with pull policy of Never"}, Running: nil},
 	}
 
 	runSyncPod(t, dm, fakeDocker, pod, nil)
@@ -1028,8 +1030,11 @@ func TestSyncPodWithPullPolicy(t *testing.T) {
 	}
 	for _, c := range pod.Spec.Containers {
 		if containerStatus, ok := api.GetContainerStatus(statuses.ContainerStatuses, c.Name); ok {
-			assert.Equal(t, containerStatus.State.Running, expectedStatusMap[c.Name].Running, "for container %s", c.Name)
-			assert.Equal(t, containerStatus.State.Waiting, expectedStatusMap[c.Name].Waiting, "for container %s", c.Name)
+			if (containerStatus.State.Running == nil && expectedStatusMap[c.Name].Running != nil) ||
+				(containerStatus.State.Running != nil && expectedStatusMap[c.Name].Running == nil) {
+				t.Errorf("container: %s, Running state expected %s got %s", expectedStatusMap[c.Name].Running, containerStatus.State.Running)
+			}
+			assert.Equal(t, expectedStatusMap[c.Name].Waiting, containerStatus.State.Waiting, "container %s waiting state", c.Name)
 		}
 	}
 
