@@ -31,6 +31,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/davecgh/go-spew/spew"
 	docker "github.com/fsouza/go-dockerclient"
 	"github.com/golang/glog"
 	"github.com/golang/groupcache/lru"
@@ -2009,4 +2010,162 @@ func (dm *DockerManager) GetNetNs(containerID string) (string, error) {
 	}
 	netnsPath := fmt.Sprintf(DockerNetnsFmt, inspectResult.State.Pid)
 	return netnsPath, nil
+}
+
+func (dm *DockerManager) filterByPod(pod *api.Pod) (map[string][]docker.APIContainers, error) {
+	podMap := make(map[string][]docker.APIContainers)
+	containers, err := dm.client.ListContainers(docker.ListContainersOptions{All: true})
+	if err != nil {
+		return podMap, err
+	}
+
+	for _, value := range containers {
+		if len(value.Names) == 0 {
+			continue
+		}
+		dockerName, _, err := ParseDockerName(value.Names[0])
+		if err != nil {
+			continue
+		}
+		if dockerName.PodFullName != kubecontainer.GetPodFullName(pod) {
+			continue
+		}
+		if pod.UID != "" && dockerName.PodUID != pod.UID {
+			continue
+		}
+		podMap[dockerName.ContainerName] = append(podMap[dockerName.ContainerName], value)
+	}
+	return podMap, nil
+}
+
+// GetPodStatus returns docker related status for all containers in the pod as
+// well as the infrastructure container.
+func (dm *DockerManager) GetPodStatus2(pod *api.Pod) (*api.PodStatus, error) {
+	oldStatuses := make(map[string]api.ContainerStatus, len(pod.Spec.Containers))
+	statuses := make(map[string]*api.ContainerStatus, len(pod.Spec.Containers))
+	lastObservedTime := make(map[string]unversioned.Time, len(pod.Spec.Containers))
+	// Record the last time we observed a container termination.
+	for _, status := range pod.Status.ContainerStatuses {
+		oldStatuses[status.Name] = status
+		if status.LastTerminationState.Terminated != nil {
+			timestamp, ok := lastObservedTime[status.Name]
+			if !ok || timestamp.Before(status.LastTerminationState.Terminated.FinishedAt) {
+				lastObservedTime[status.Name] = status.LastTerminationState.Terminated.FinishedAt
+			}
+		}
+	}
+
+	podContainers, err := dm.filterByPod(pod)
+	if err != nil {
+		return nil, err
+	}
+
+	var podStatus api.PodStatus
+	for _, infraContainer := range podContainers[PodInfraContainerName] {
+		if result := dm.inspectContainer(infraContainer.ID, PodInfraContainerName, "", pod); result.err == nil {
+			if result.status.State.Running != nil {
+				podStatus.PodIP = result.ip
+				break
+			}
+		}
+	}
+
+	for _, expectedContainer := range pod.Spec.Containers {
+		containerList := podContainers[expectedContainer.Name]
+
+		if len(containerList) > 0 {
+			var result *containerStatusResult
+			if result = dm.inspectContainer(containerList[0].ID, expectedContainer.Name, expectedContainer.TerminationMessagePath, pod); result.err != nil {
+				return nil, result.err
+			}
+			statuses[expectedContainer.Name] = &result.status
+
+			for _, previousContainer := range containerList[1:] {
+				//glog.Infof("ZZZ: previousContainer=%s", spew.Sdump(previousContainer))
+				if result = dm.inspectContainer(previousContainer.ID, expectedContainer.Name, expectedContainer.TerminationMessagePath, pod); result.err != nil {
+					return nil, result.err
+				}
+				//glog.Infof("ZZZ: result previousContainer=%s", spew.Sdump(result.status))
+				if result.status.State.Terminated != nil {
+					statuses[expectedContainer.Name].LastTerminationState = result.status.State
+					//glog.Infof("ZZZ: status %s", spew.Sdump(statuses[expectedContainer.Name]))
+					break
+				}
+			}
+		}
+
+		if len(containerList) <= 0 {
+			if oldStatus, found := oldStatuses[expectedContainer.Name]; found {
+				statuses[expectedContainer.Name].LastTerminationState = oldStatus.LastTerminationState
+			}
+			_, err := dm.client.InspectImage(expectedContainer.Image)
+			if err == nil {
+				statuses[expectedContainer.Name].State.Waiting = &api.ContainerStateWaiting{
+					Message: fmt.Sprintf("Image: %s is ready, container is creating", expectedContainer.Image),
+					Reason:  "ContainerCreating",
+				}
+			} else if err == docker.ErrNoSuchImage {
+				statuses[expectedContainer.Name].State.Waiting = &api.ContainerStateWaiting{
+					Message: fmt.Sprintf("Image: %s is not ready on the node", expectedContainer.Image),
+					Reason:  "ImageNotReady",
+				}
+			}
+		}
+
+		reasonInfo, ok := dm.reasonCache.Get(pod.UID, expectedContainer.Name)
+		if ok && (reasonInfo.reason == kubecontainer.ErrCrashLoopBackOff.Error()) && statuses[expectedContainer.Name].State.Waiting == nil {
+			statuses[expectedContainer.Name].LastTerminationState = statuses[expectedContainer.Name].State
+			statuses[expectedContainer.Name].State = api.ContainerState{
+				Waiting: &api.ContainerStateWaiting{
+					Reason:  reasonInfo.reason,
+					Message: reasonInfo.message,
+				},
+			}
+		}
+
+		restartCount := oldStatuses[expectedContainer.Name].RestartCount
+		lastObservedTime, ok := lastObservedTime[expectedContainer.Name]
+		glog.Infof("ZZZ lastObservedTime %s %s %s restartCount=%d", expectedContainer.Name, spew.Sdump(oldStatuses[expectedContainer.Name].LastTerminationState), lastObservedTime.Time, restartCount)
+		for _, previousContainer := range containerList[1:] {
+			var inspectResult *docker.Container
+			if inspectResult, err = dm.client.InspectContainer(previousContainer.ID); err != nil {
+				glog.Infof("ZZZ CANT INSPECT %s", previousContainer.ID)
+				return nil, err
+			}
+			glog.Infof("ZZZ inspectResult.State %s isrunning=%v %s", previousContainer.ID, inspectResult.State.Running, spew.Sdump(inspectResult.State.FinishedAt))
+			if inspectResult.State.Running {
+				glog.Info("ZZZ isRunning next")
+				continue
+			}
+			if !inspectResult.State.FinishedAt.After(lastObservedTime.Time) {
+				glog.Infof("ZZZ %s is Before %s", inspectResult.State.FinishedAt, lastObservedTime.Time)
+				continue
+			}
+			restartCount += 1
+			glog.Infof("ZZZ RESTART++ %s lastObservedTime=%s deadContainer=%s @ %s", expectedContainer.Name, lastObservedTime, previousContainer.ID, inspectResult.State.FinishedAt) //SABED
+			glog.Infof("ZZZ RESTART++ restartCount=%d", restartCount)
+		}
+		if oldStatuses[expectedContainer.Name].State.Waiting != nil && statuses[expectedContainer.Name].State.Running != nil && statuses[expectedContainer.Name].LastTerminationState.Terminated != nil {
+			restartCount += 1
+		}
+		statuses[expectedContainer.Name].RestartCount = restartCount
+	}
+
+	podStatus.ContainerStatuses = make([]api.ContainerStatus, 0)
+	for containerName, status := range statuses {
+		//glog.Infof("ZZZ range statues %s %s", containerName, spew.Sdump(status)) //SABED
+		if status.State.Waiting != nil {
+			// For containers in the waiting state, fill in a specific reason if it is recorded.
+			if reasonInfo, ok := dm.reasonCache.Get(pod.UID, containerName); ok {
+				status.State.Waiting.Reason = reasonInfo.reason
+				status.State.Waiting.Message = reasonInfo.message
+			}
+		}
+		podStatus.ContainerStatuses = append(podStatus.ContainerStatuses, *status)
+	}
+	// Sort the container statuses since clients of this interface expect the list
+	// of containers in a pod to behave like the output of `docker list`, which has a
+	// deterministic order.
+	sort.Sort(kubeletTypes.SortedContainerStatuses(podStatus.ContainerStatuses))
+	return &podStatus, nil
 }
