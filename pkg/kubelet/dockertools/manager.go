@@ -1845,6 +1845,7 @@ func (dm *DockerManager) SyncPod(pod *api.Pod, runningPod kubecontainer.Pod, pod
 			glog.V(4).Infof("Backing Off restarting container %+v in pod %v", container, podFullName)
 			continue
 		}
+		glog.Infof("ZZZ: PODSTATUS=%s", spew.Sdump(podStatus))
 		glog.V(4).Infof("Creating container %+v in pod %v", container, podFullName)
 		err := dm.imagePuller.PullImage(pod, container, pullSecrets)
 		dm.updateReasonCache(pod, container, "PullImageError", err)
