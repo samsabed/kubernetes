@@ -1452,7 +1452,7 @@ func containerAndPodFromLabels(inspect *docker.Container) (pod *api.Pod, contain
 }
 
 // Run a single container from a pod. Returns the docker container ID
-func (dm *DockerManager) runContainerInPod(pod *api.Pod, container *api.Container, netMode, ipcMode, pidMode string, podStatus api.PodStatus) (kubeletTypes.DockerID, error) {
+func (dm *DockerManager) runContainerInPod(pod *api.Pod, container *api.Container, netMode, ipcMode, pidMode string) (kubeletTypes.DockerID, error) {
 	start := time.Now()
 	defer func() {
 		metrics.ContainerManagerLatency.WithLabelValues("runContainerInPod").Observe(metrics.SinceInMicroseconds(start))
@@ -1845,7 +1845,6 @@ func (dm *DockerManager) SyncPod(pod *api.Pod, runningPod kubecontainer.Pod, pod
 			glog.V(4).Infof("Backing Off restarting container %+v in pod %v", container, podFullName)
 			continue
 		}
-		glog.Infof("ZZZ: PODSTATUS=%s", spew.Sdump(podStatus))
 		glog.V(4).Infof("Creating container %+v in pod %v", container, podFullName)
 		err := dm.imagePuller.PullImage(pod, container, pullSecrets)
 		dm.updateReasonCache(pod, container, "PullImageError", err)
@@ -1869,7 +1868,7 @@ func (dm *DockerManager) SyncPod(pod *api.Pod, runningPod kubecontainer.Pod, pod
 		// and IPC namespace.  PID mode cannot point to another container right now.
 		// See createPodInfraContainer for infra container setup.
 		namespaceMode := fmt.Sprintf("container:%v", podInfraContainerID)
-		_, err = dm.runContainerInPod(pod, container, namespaceMode, namespaceMode, getPidMode(pod), podStatus)
+		_, err = dm.runContainerInPod(pod, container, namespaceMode, namespaceMode, getPidMode(pod))
 		dm.updateReasonCache(pod, container, "RunContainerError", err)
 		if err != nil {
 			// TODO(bburns) : Perhaps blacklist a container after N failures?
@@ -2076,26 +2075,27 @@ func (dm *DockerManager) GetPodStatus2(pod *api.Pod) (*api.PodStatus, error) {
 
 		if len(containerList) > 0 {
 			var result *containerStatusResult
+			// newest container
 			if result = dm.inspectContainer(containerList[0].ID, expectedContainer.Name, expectedContainer.TerminationMessagePath, pod); result.err != nil {
 				return nil, result.err
 			}
 			statuses[expectedContainer.Name] = &result.status
 
+			// go thru the remaining containers
 			for _, previousContainer := range containerList[1:] {
-				//glog.Infof("ZZZ: previousContainer=%s", spew.Sdump(previousContainer))
 				if result = dm.inspectContainer(previousContainer.ID, expectedContainer.Name, expectedContainer.TerminationMessagePath, pod); result.err != nil {
 					return nil, result.err
 				}
-				//glog.Infof("ZZZ: result previousContainer=%s", spew.Sdump(result.status))
+				// add 1st terminated container to State.Terminated
 				if result.status.State.Terminated != nil {
 					statuses[expectedContainer.Name].LastTerminationState = result.status.State
-					//glog.Infof("ZZZ: status %s", spew.Sdump(statuses[expectedContainer.Name]))
 					break
 				}
 			}
 		}
 
-		if len(containerList) <= 0 {
+		// There are no running containers for this pod
+		if len(containerList) == 0 {
 			if oldStatus, found := oldStatuses[expectedContainer.Name]; found {
 				statuses[expectedContainer.Name].LastTerminationState = oldStatus.LastTerminationState
 			}
@@ -2113,6 +2113,7 @@ func (dm *DockerManager) GetPodStatus2(pod *api.Pod) (*api.PodStatus, error) {
 			}
 		}
 
+		// set Reason and Message from the Cache for ErrCrashLoopBackOff
 		reasonInfo, ok := dm.reasonCache.Get(pod.UID, expectedContainer.Name)
 		if ok && (reasonInfo.reason == kubecontainer.ErrCrashLoopBackOff.Error()) && statuses[expectedContainer.Name].State.Waiting == nil {
 			statuses[expectedContainer.Name].LastTerminationState = statuses[expectedContainer.Name].State
@@ -2124,9 +2125,10 @@ func (dm *DockerManager) GetPodStatus2(pod *api.Pod) (*api.PodStatus, error) {
 			}
 		}
 
+		// set restartCount, start with the old value and the time that value was recorded
 		restartCount := oldStatuses[expectedContainer.Name].RestartCount
 		lastObservedTime, ok := lastObservedTime[expectedContainer.Name]
-		glog.Infof("ZZZ lastObservedTime %s %s %s restartCount=%d", expectedContainer.Name, spew.Sdump(oldStatuses[expectedContainer.Name].LastTerminationState), lastObservedTime.Time, restartCount)
+		// Restart Count is the number of dead containers, excluding the last one (which is the restarted container)
 		for _, previousContainer := range containerList[1:] {
 			var inspectResult *docker.Container
 			if inspectResult, err = dm.client.InspectContainer(previousContainer.ID); err != nil {
@@ -2143,9 +2145,8 @@ func (dm *DockerManager) GetPodStatus2(pod *api.Pod) (*api.PodStatus, error) {
 				continue
 			}
 			restartCount += 1
-			glog.Infof("ZZZ RESTART++ %s lastObservedTime=%s deadContainer=%s @ %s", expectedContainer.Name, lastObservedTime, previousContainer.ID, inspectResult.State.FinishedAt) //SABED
-			glog.Infof("ZZZ RESTART++ restartCount=%d", restartCount)
 		}
+		// when transitioning out of a wait state, the container was "observed" but not accounted for
 		if oldStatuses[expectedContainer.Name].State.Waiting != nil && statuses[expectedContainer.Name].State.Running != nil && statuses[expectedContainer.Name].LastTerminationState.Terminated != nil {
 			restartCount += 1
 		}
@@ -2154,7 +2155,6 @@ func (dm *DockerManager) GetPodStatus2(pod *api.Pod) (*api.PodStatus, error) {
 
 	podStatus.ContainerStatuses = make([]api.ContainerStatus, 0)
 	for containerName, status := range statuses {
-		//glog.Infof("ZZZ range statues %s %s", containerName, spew.Sdump(status)) //SABED
 		if status.State.Waiting != nil {
 			// For containers in the waiting state, fill in a specific reason if it is recorded.
 			if reasonInfo, ok := dm.reasonCache.Get(pod.UID, containerName); ok {
