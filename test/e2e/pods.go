@@ -855,7 +855,8 @@ var _ = Describe("Pods", func() {
 		delay1, delay2 := startPodAndGetBackOffs(framework, pod, podName, containerName, buildBackOffDuration)
 		delay1 += 1 // divide by zero
 		ratio := float64(delay2) / float64(delay1)
-		if math.Floor(ratio) != 2 && math.Ceil(ratio) != 2 {
+		//should be ratio == 2, but latency and qps limits means it varies
+		if ratio < 1.2 || ratio > 4 {
 			Failf("back-off gap is not increasing exponentially pod=%s/%s delay1=%s delay2=%s", podName, containerName, delay1, delay2)
 		}
 	})
