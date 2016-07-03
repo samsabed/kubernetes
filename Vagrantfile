@@ -30,6 +30,7 @@ $kube_os = ENV['KUBERNETES_OS'] || "fedora"
 
 # Determine whether vagrant should use nfs to sync folders
 $use_nfs = ENV['KUBERNETES_VAGRANT_USE_NFS'] == 'true'
+$use_9p = ENV['KUBERNETES_VAGRANT_USE_9P'] == 'true'
 
 # To override the vagrant provider, use (e.g.):
 #   KUBERNETES_PROVIDER=vagrant VAGRANT_DEFAULT_PROVIDER=... .../cluster/kube-up.sh
@@ -150,6 +151,10 @@ Vagrant.configure(VAGRANTFILE_API_VERSION) do |config|
 
     if $use_nfs then
       config.vm.synced_folder ".", "/vagrant", nfs: true
+    end
+
+    if $use_9p then
+      config.vm.synced_folder './', '/vagrant', type: '9p', disabled: false, accessmode: "mapped", mount: true
     end
 
     # Try VMWare Fusion first (see
